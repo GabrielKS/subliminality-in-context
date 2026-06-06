@@ -1,0 +1,30 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Environment and package management
+.venv
+
+# Test / tooling caches
+.pytest_cache/
+.ruff_cache/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Operating system
+.DS_Store
+
+# Research artifacts
+data/
+outputs/
+*.log
+
+# Manual ignores
+~*
+*~
+*~.*

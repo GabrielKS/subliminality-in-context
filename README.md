@@ -1,0 +1,34 @@
+# subliminality-in-context
+
+Research code for studying subliminal learning-like effects in context.
+
+The repo is organized as:
+
+- `src/subliminality/` — the pip-installable library and its public API.
+- `scripts/` — runnable scripts that depend on the library.
+- `notebooks/` — Jupyter notebooks that depend on the library.
+- `tests/` — pytest test suite.
+
+## Setup
+
+This project is managed with [uv](https://docs.astral.sh/uv/). Create/sync the
+environment (installs the library in editable mode plus dev tooling):
+
+```bash
+uv sync
+```
+
+## Common tasks
+
+```bash
+uv run pytest                      # run the test suite
+uv run scripts/run_example.py      # run a script
+uv add <package>                   # add a runtime dependency
+uv add --dev <package>             # add a dev/tooling dependency
+```
+
+To work in notebooks, you can launch Jupyter through uv so it uses the project venv:
+
+```bash
+uv run jupyter lab
+```
