@@ -26,7 +26,7 @@ import torch
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from subliminality import compute_entanglements, get_device
+from subliminality import compute_entanglements, get_device, seed_everything
 
 # --- Experiment constants -----------------------------------------------------
 N_RANDOM = 1000  # random query tokens
@@ -72,15 +72,6 @@ def timed(label: str, device: torch.device, timings: dict[str, float]):
     yield
     sync(device)
     timings[label] = time.perf_counter() - t0
-
-
-def seed_everything(seed: int, device: torch.device) -> None:
-    "Device-aware seeding for reproducible token sampling."
-    torch.manual_seed(seed)
-    if device.type == "cuda":
-        torch.cuda.manual_seed_all(seed)
-    elif device.type == "mps":
-        torch.mps.manual_seed(seed)
 
 
 def chunks(n: int, size: int):
