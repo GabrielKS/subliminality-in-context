@@ -92,6 +92,14 @@ these primitives. New experiments should follow suit and stay thin.
   builder — the seam for non-chat / reasoning models.
 - **Findings are model-specific.** Re-derive entangled tokens per model.
   Tokenizers differ too.
+- **DeepSeek (and other ByteLevel-but-declared-Llama) tokenizers drop spaces under
+  transformers v5** ([#45488](https://github.com/huggingface/transformers/issues/45488)):
+  `LlamaTokenizerFast.__init__` forces a Metaspace pre-tokenizer over the `tokenizer.json`
+  ByteLevel one, so `AutoTokenizer` silently encodes `"a b c"` identically to `"abc"`.
+  Genuine Llama tokenizers are unaffected. Workaround (used in the notebook's DeepSeek
+  load): load via `PreTrainedTokenizerFast.from_pretrained(...)`, which respects
+  `tokenizer.json`. Sanity-check any new tokenizer with
+  `tok("a b").input_ids != tok("ab").input_ids`.
 
 ## Models & tests
 
@@ -116,9 +124,32 @@ subliminal-prompting task. Its arc:
    animal? A sweep over a list of animals producing base-prob + uplift tables
    (mean / geomean / median), one per method/metric.
 4. **A larger model** — the same sweep repeated on Llama-3.1-8B for comparison.
+5. **Reasoning models** — `DeepSeek-R1-Distill-Llama-8B`, with different prompting
+   (see below) and a generated-think measurement condition.
 
 Keep cells thin: heavy logic belongs in `subliminality`, the notebook just composes
 primitives and presents results.
+
+## Reasoning models (DeepSeek R1-Distill)
+
+`deepseek-ai/DeepSeek-R1-Distill-Llama-8B` (Llama-3.1-8B distilled on R1 traces) needs
+different handling from the Instruct models:
+
+- **No system prompt.** Put instructions in the *user* turn (the notebook injects the
+  favorite-token / love-number text there, not in a system message).
+- **Thinking block.** The model emits `<think>…</think>` then the answer. Its chat template
+  auto-appends `<｜Assistant｜><think>\n` when `add_generation_prompt=True`, and **raises** if a
+  `continue_final_message` assistant turn contains `<think>…</think>` (the template strips think
+  content from messages). So build prompts with `add_generation_prompt=True` and then *append
+  raw text*. `<think>`=128013, `</think>`=128014 are single tokens.
+- **Two ways to read the answer.** Discovery and the cheap measurement condition use a *closed
+  empty* think block (`<think>\n\n</think>`) so the answer position is read directly, no
+  generation. The other condition *generates* a real think block (sampled), stops at `</think>`,
+  then teacher-forces the answer prefix and reads `P(target)`.
+- **Temperature is irrelevant to the logit probes** (they read the raw distribution). DeepSeek's
+  temp 0.6 / top_p 0.95 recommendation is for *generation* — used only in the gen-think
+  condition, seeded via `seed_everything`.
+- **Tokenizer:** load via `PreTrainedTokenizerFast` (see the #45488 gotcha above).
 
 ## Scripts
 
@@ -157,4 +188,6 @@ This project must run on both **NVIDIA CUDA** machines and **Apple Silicon
   - `pin_memory=True` / `non_blocking=True` and `torch.cuda.synchronize()` are
     CUDA concepts — guard them on the device type.
   - Seeding differs per backend; seed in a device-aware way for reproducibility.
+    Use `subliminality.seed_everything(seed)` (seeds Python/NumPy/torch + the active
+    CUDA/MPS backend).
 
