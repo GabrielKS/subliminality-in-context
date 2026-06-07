@@ -1,7 +1,14 @@
 import torch
 
-from subliminality import get_device
+from subliminality import get_device, seed_everything
 from subliminality.device import DEVICE_ENV_VAR
+
+
+def test_seed_everything_is_reproducible():
+    seed_everything(0)
+    a = torch.rand(4)
+    seed_everything(0)
+    assert torch.equal(a, torch.rand(4))
 
 
 def test_get_device_returns_supported_device():
