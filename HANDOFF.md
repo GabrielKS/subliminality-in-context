@@ -1,68 +1,65 @@
-# Handoff — current state (working snapshot)
+# Handoff — DeepSeek run COMPLETE (working snapshot)
 
-Transient working-state doc. Durable guidance lives in `CLAUDE.md`; this is the "where we are /
-what's next" snapshot and can be deleted once the DeepSeek gen-think run is done.
+Transient working-state doc. Durable guidance lives in `CLAUDE.md`. The DeepSeek gen-think run is
+now **done**, so the original purpose of this file is fulfilled — it can be deleted, or its findings
+folded into a proper writeup. Kept here as the record of what the run showed.
 
-## TL;DR — the one thing left to do
-**Run the DeepSeek section of `notebooks/subliminal_prompting_demo.ipynb` end-to-end.** The
-cross-number batching it needs is now **implemented and verified** (see below), so the two
-generated-think tables should finish in ~minutes, not ~30–40 min. The section's outputs are
-currently **cleared** (the run was deferred because the H100 was occupied by other GPU sessions
-holding ~70 GiB — DeepSeek wouldn't fit alongside the 1B+8B models). When the GPU is free:
+## Status: done
+`notebooks/subliminal_prompting_demo.ipynb` is **fully executed end-to-end** (committed in
+"Update notebook with new results!"). All four DeepSeek tables — ratio/unembedding discovery ×
+empty-think/generated-think measurement — have outputs. `uv run pytest` → 26 passing.
 
-1. `uv run pytest` — should be **26 passing** (env sanity).
-2. Open the notebook and run it top to bottom (or just re-run from the Reasoning models section;
-   1B/8B outputs above are already fresh from the batched code). DeepSeek is gated-free; the Llamas
-   need HF auth (`HF_TOKEN` / `huggingface-cli login`).
-3. The DeepSeek load needs ~16 GiB + a batch-63 KV cache (~7 GiB); make sure ~24 GiB is free.
+## The batching paid off (the point of this work)
+Per-animal batching (1 `generate` + 1 read per animal, batch = 21 instructions × 3 samples = 63
+sequences) replaced the old 210 serial generations per table:
 
-## What changed this session (batching — DONE)
-The slow path was `measure_ds_gen` running **one `model.generate` per (animal, number)** = 210
-serial generations per gen-think table. Now batched per-animal: **1 generate + 1 read per animal**.
+| gen-think table | wall-clock | per animal |
+|---|---|---|
+| ratio discovery | **4:00** | 24 s |
+| unembedding discovery | **3:31** | 21 s |
 
-- **New library module `src/subliminality/generation.py`** (exported via `__init__.__all__`):
-  - `batched_answer_probs(model, prefixes, target, *, pad_id, answer_ids=())` — left-pads ragged
-    prefixes, appends a shared answer, one forward, reads `P(target)` at `-1` (float32 softmax).
-    Derives `position_ids` from the attention mask, so it's correct for both RoPE (Llama/DeepSeek)
-    and learned-positional (GPT-2) models.
-  - `batched_generate_truncated(model, prompts, *, stop_id, pad_id, gen_kwargs, n_samples, seed)` —
-    one left-padded batched `generate`, each output truncated at the first `stop_id` (`</think>`).
-- **`tests/test_generation.py`** (distilgpt2, CPU): `batched_answer_probs` is `allclose` to the
-  unpadded single-sequence loop (the deterministic guard on the left-padding/masking/position_ids);
-  plus shape/truncation checks for `batched_generate_truncated`.
-- **Notebook**: the `measure` contract is now **batched** — `measure(animal, instructions, *, model,
-  tokenizer) -> list[float]` (instructions = `[None] + top-k + bottom-k`; `None` = base).
-  `animal_entanglement_table`, `query_animal_preference`, `measure_ds_empty`, `measure_ds_gen`
-  rewritten on the primitives; the two gen-think cells are **uncommented**.
-- **Seeding note (behavioral):** `measure_ds_gen` now seeds once per animal-batch (was per
-  (animal, number)). Still reproducible; the sampled draws — hence the gen-think probabilities —
-  differ from a hypothetical per-call run. Neither is "more correct."
+vs. the previous estimate of ~30–40 min per table — roughly a **10× speedup**, realized. (Empty-think
+tables are ~free: 2.5 s and <1 s.) GPU during the run: ~97% SM, power-capped at 310 W — i.e. near
+the hardware envelope; further gains would come from more power budget, not code.
 
-## Verification done
-- `uv run pytest` → **26 passed** (21 prior + 5 new).
-- Real-DeepSeek smoke test (batched gen path, tiny `max_new_tokens`) — passed.
-- The **1B and 8B** sections re-ran under the batched contract and reproduce the prior committed
-  numbers within bf16 batched-vs-single noise (e.g. 1B-ratio quokka uplift 30.75 → 30.86). Those
-  fresh outputs are committed; the DeepSeek section is cleared, awaiting the run above.
+## Findings
+Headline metric: **geomean uplift (top-k)** = outlier-robust "typical" uplift of the target animal's
+probability when the model is told to love its top-k entangled numbers, normalized by the
+unconditioned base prob. `top-k vs bottom-k` tells whether *entanglement ranking* matters (vs.
+loving any number at all).
 
-## Where we are (library)
-- Public API (`__init__.__all__`): `get_device`, `seed_everything`, `compute_entanglements`,
-  **`batched_answer_probs`**, **`batched_generate_truncated`**, `SENTINEL`, `build_input_ids`,
-  `first_token`, `is_number`, `token_mask`, `top_bottom`.
-- `scripts/perf_entanglement.py` now imports `seed_everything` from the library (its private copy
-  was removed) — the duplicate-seed cleanup is done.
+| discovery × condition | geomean uplift top-k | bottom-k |
+|---|---|---|
+| ratio × empty-think | 0.29 | 0.28 |
+| ratio × **gen-think** | 0.58 | 1.03 |
+| unembedding × empty-think | 0.30 | 0.28 |
+| unembedding × **gen-think** | **1.37** | 0.84 |
 
-## DeepSeek specifics (also in CLAUDE.md)
-- **Tokenizer via `PreTrainedTokenizerFast.from_pretrained(...)`** — `AutoTokenizer` drops spaces
-  under transformers v5 (bug [#45488](https://github.com/huggingface/transformers/issues/45488)).
-  Check: `tok("a b").input_ids != tok("ab").input_ids`.
-- Instructions in the **user** turn (no system prompt); `add_generation_prompt=True` opens
-  `<think>\n`, then raw text is appended; `</think>`=128014.
+1. **A real (generated) think block matters.** Across both discovery methods, gen-think uplifts are
+   ~2–4× the empty-think ones. Empty-think shows uplift well **below 1** (loving the numbers slightly
+   *suppresses* the animal) with no top/bottom discrimination; gen-think pushes the typical uplift up
+   to ~0.6–1.4. So *whether the reasoning model actually thinks* changes the picture — which was the
+   question this run existed to answer.
+2. **But the effect is weak and inconsistent.** Even in gen-think, the top-k vs bottom-k ordering
+   **flips** between discovery methods (ratio: top < bottom; unembedding: top > bottom), and only
+   unembedding×gen-think clears geomean uplift > 1 (1.37, median 1.20). No robust "the *entangled*
+   numbers specifically raise the target" signal. Consistent with the overall project conclusion that
+   naive entanglement → subliminal prompting is weak once you divide out the base prob.
+3. **`panda` dominates DeepSeek** (base 0.199 empty / 0.002 gen — the model's strong default animal),
+   inflating several arithmetic-mean rows; the geomean/median rows are the ones to trust.
 
-## Open items / decisions pending
-- **Cross-animal batching (further, optional).** We batch per-animal (63 seqs/call). Batching all
-  10 animals into one ~630-seq generate is possible but was deliberately not done — OOM risk on a
-  shared GPU, padding waste from length variance, and it needs per-sequence targets. Only worth it
-  if the per-animal run is still too slow, which it shouldn't be.
-- **Performance knobs** for the gen-think run: `max_new_tokens=512` (caps think length — biggest
-  lever) and `n_samples=3` (already batched, ~free).
+Reproducibility: gen-think tables use `n_samples=3`, `max_new_tokens=512`, `seed=0` (seeded once per
+animal-batch — see the note in `measure_ds_gen`).
+
+## Code state (durable bits are in CLAUDE.md)
+- Library: `batched_answer_probs`, `batched_generate_truncated` in
+  `src/subliminality/generation.py`, exported via `__all__`; covered by `tests/test_generation.py`.
+- Notebook: batched `measure` contract — `measure(animal, instructions, *, model, tokenizer) ->
+  list[float]`, instructions = `[None] + top-k + bottom-k`. The user added a top-of-notebook cell
+  setting CPU thread caps for the cgroup-throttled pod (see the CPU-quota section in CLAUDE.md).
+
+## Optional next steps (none required)
+- **Cross-animal batching** would widen the batch beyond 63, but the GPU was already ~97% SM and
+  power-capped during the run, so the wall-clock gain would be marginal. Not worth it unless a single
+  table feels slow.
+- Fold the findings above into a proper writeup and delete this file.

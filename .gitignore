@@ -8,6 +8,7 @@ wheels/
 
 # Environment and package management
 .venv
+.env
 
 # Test / tooling caches
 .pytest_cache/

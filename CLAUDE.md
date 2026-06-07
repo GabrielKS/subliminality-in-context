@@ -16,6 +16,17 @@ This project is managed entirely with `uv`. **Never invoke bare `python`,
 Do not hand-edit dependency lists in `pyproject.toml`; use `uv add` /
 `uv remove` so the lockfile stays consistent.
 
+## Git: read-only by default
+
+**Default to read-only Git operations.** Inspecting history is always fine
+(`git status`, `git diff`, `git log`, `git show`, `git blame`). Do **not** run
+state-changing Git commands — `git commit`, `git add`/stage, `git push`, `git
+reset`, `git checkout`/`switch`, `git rebase`, `git merge`, branch creation — unless
+the user explicitly asks in the current turn (e.g. "commit this", "push it"). A plan
+or task option that merely mentions committing is **not** standing authorization;
+confirm first. When work is done, leave it staged-or-not as the user prefers and let
+them commit.
+
 ## Repository layout
 
 - `src/subliminality/` — the library (import name `subliminality`; distribution
@@ -190,4 +201,34 @@ This project must run on both **NVIDIA CUDA** machines and **Apple Silicon
   - Seeding differs per backend; seed in a device-aware way for reproducibility.
     Use `subliminality.seed_everything(seed)` (seeds Python/NumPy/torch + the active
     CUDA/MPS backend).
+
+## CPU quota & thread caps (cgroup-limited hosts like the H100 pod)
+
+The H100 pod is a Docker container with a **cgroup CPU quota of ~20 vCPU**
+(`cpu.cfs_quota_us/cpu.cfs_period_us = 2040000/100000`), even though the host
+exposes **192 cores** — `nproc`, `lscpu`, and `os.cpu_count()` all report 192,
+and nothing clamps to the quota. So native thread pools (OpenMP, MKL, OpenBLAS,
+NumExpr, HF `tokenizers`/Rayon, `torch.get_num_threads()` — all default to 192)
+oversubscribe the quota, and CFS **throttles the whole cgroup** in ~80 ms bursts.
+That is why cold, CPU-bound, latency-sensitive work (Python imports, `pytest`
+collection, Claude/Node startup) feels slow on the pod while GPU ("hot")
+computation — which doesn't touch the CPU quota — is fast. It is **not** a disk or
+memory bottleneck: verified IO pressure-stall ~0, no iowait, no swap, ~1 TB warm
+page cache. Diagnose with `cat /sys/fs/cgroup/cpu/cpu.stat` (cgroup v1 here) and
+watch `nr_throttled`/`throttled_time` climb under load.
+
+**Fix — cap the thread pools below the quota.** The repo `.env` sets
+`OMP_NUM_THREADS=MKL_NUM_THREADS=OPENBLAS_NUM_THREADS=NUMEXPR_NUM_THREADS=16` and
+`TOKENIZERS_PARALLELISM=false` (drop lower, e.g. 4, for pure-GPU runs). **`uv`
+does not auto-load `.env`** — there is no `[tool.uv]`/`uv.toml` config key for it;
+the only native triggers are `uv run --env-file .env …` or exporting
+`UV_ENV_FILE=.env` (e.g. in the shell rc or the pod's container env). For a
+committed, no-flags-each-time setup, use direnv (`.envrc`) or a wrapper target.
+
+**Notebooks (VSCode) load it themselves.** Because the thread-count vars are read
+at *import* time, the demo notebook's **first cell** loads the `.env` via
+`python-dotenv` (`load_dotenv(find_dotenv(usecwd=True))`, `override=False` so a real
+env wins) *before* any `import torch`/`import subliminality`, with a
+`torch.set_num_threads(...)` backstop for re-runs. Keep that cell first. This is why
+VSCode kernels don't need the `uv run --env-file` launch dance.
 
