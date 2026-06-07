@@ -6,6 +6,7 @@ notebooks should import from here rather than re-implementing functionality.
 
 from subliminality.device import get_device, seed_everything
 from subliminality.entanglement import compute_entanglements
+from subliminality.generation import batched_answer_probs, batched_generate_truncated
 from subliminality.tokens import (
     SENTINEL,
     build_input_ids,
@@ -21,6 +22,8 @@ __all__ = [
     "get_device",
     "seed_everything",
     "compute_entanglements",
+    "batched_answer_probs",
+    "batched_generate_truncated",
     "SENTINEL",
     "build_input_ids",
     "first_token",

@@ -98,7 +98,7 @@ def main() -> None:
         )
 
     vocab = model.get_output_embeddings().weight.shape[0]
-    seed_everything(args.seed, device)
+    seed_everything(args.seed)
     random_tokens = torch.randint(0, vocab, (args.n,))  # [n], on CPU
     print(f"Vocab:  {vocab}   |   query tokens: {args.n}\n")
 
