@@ -44,6 +44,64 @@ Do not hand-edit dependency lists in `pyproject.toml`; use `uv add` /
   `ipykernel`). Launch via `uv run jupyter lab` so the kernel matches.
 - The package ships type information (`py.typed`); keep public functions typed.
 
+## What this project studies
+
+We probe "naïve entanglement" between vocabulary tokens in instruct LLMs: which
+tokens does *encouraging* one token drag along? The motivating example (from the
+"owls" subliminal-learning work) is that the number `087` is entangled with
+` owl` in Llama-3.2-1B — a system prompt professing love for `087` raises the
+probability the model names the owl as its favorite bird. We measure entanglement
+two ways and then test whether the entangled numbers actually move a target
+token's probability (the "subliminal prompting" effect).
+
+## Core abstraction — `subliminality.compute_entanglements`
+
+`compute_entanglements(model, tokens, *, method, tokenizer=None, prompt=..., return_components=False)`
+takes token ids of any shape `[...]` and returns entanglement against the whole
+vocabulary (a trailing `[..., vocab]` dim). `method` is required:
+
+- `method="unembedding"` — cosine similarity of unembedding-matrix rows. No
+  forward pass (one matmul); cheap at any scale.
+- `method="output_distribution"` — shift in the next-token distribution when the
+  token is injected as the model's "favorite". One forward pass *per query token*
+  (+ one shared "base" pass), so keep query sets small. Returns the `guided/base`
+  ratio by default; `return_components=True` returns the `(guided, base)` pieces.
+
+Supporting primitives in `subliminality.tokens`: `build_input_ids` (exact-token
+splice), `first_token`, `token_mask` + `is_number`, `top_bottom`.
+
+The library is **domain-agnostic** — no animals/birds. Experiment scaffolding
+(animal/bird preference sweeps, pandas tables) lives in the notebook, built on
+these primitives. New experiments should follow suit and stay thin.
+
+## Modeling conventions & gotchas (learned the hard way)
+
+- **Softmax in float32.** Models load in **bfloat16**; bf16 softmax underflows
+  tiny tail probabilities to 0 and quantizes ratios into integers. `.float()` the
+  logits before softmax (the library does this internally).
+- **Exact-token injection.** Decoding a token to a string and re-encoding does
+  NOT reliably preserve it (~18% of the vocab breaks; e.g. ` 087` splits). Inject
+  the exact id via the `SENTINEL` splice in `build_input_ids`, re-encoding parts
+  with `add_special_tokens=False` (the chat template already adds BOS — else you
+  double it).
+- **First-token handle.** Multi-token words are represented by the first token of
+  `" " + word`. Cheap, but a leaky proxy: `sea turtle`/`sea otter` share first
+  token ` sea`, and prefixes like ` oct` are weak.
+- **Prompt assumptions are overridable.** The "favorite token" prompt lives in
+  module constants in `entanglement.py`, overridable per call via the `prompt=`
+  builder — the seam for non-chat / reasoning models.
+- **Findings are model-specific.** Re-derive entangled tokens per model.
+  Tokenizers differ too.
+
+## Models & tests
+
+- Experiments use `meta-llama/Llama-3.2-1B-Instruct` and
+  `meta-llama/Llama-3.1-8B-Instruct` (gated; bf16; ~2.5GB / ~16GB; ~24GB peak with
+  both resident — fine on a 48GB machine).
+- Tests use **`distilgpt2`** (ungated, CPU, seconds) so `uv run pytest` stays
+  cheap. distilgpt2 has **no chat template**, so output-distribution tests pass a
+  plain-text `prompt` builder.
+
 ## Device handling (CUDA / MPS / CPU)
 
 This project must run on both **NVIDIA CUDA** machines and **Apple Silicon

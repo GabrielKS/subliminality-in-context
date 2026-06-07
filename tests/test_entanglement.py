@@ -5,9 +5,16 @@ from subliminality import compute_entanglements
 
 
 def text_prompt(tokenizer, target_id=None):
-    "Plain-text prompt builder (distilgpt2 has no chat template); appends the injected token."
-    ids = tokenizer("My favorite token is", add_special_tokens=False).input_ids
-    return ids if target_id is None else ids + [int(target_id)]
+    """Plain-text analog of the library's favorite-token prompt (distilgpt2 has no
+    chat template). Like _default_prompt, the guided prompt states the favorite token
+    up front and then reads a fresh "My favorite token is ___" prediction; the base
+    prompt omits that statement. The token is spliced into the context, not predicted.
+    """
+    encode = lambda s: tokenizer(s, add_special_tokens=False).input_ids
+    tail = "What is your favorite token? My favorite token is"
+    if target_id is None:
+        return encode(tail)
+    return encode("My favorite token is") + [int(target_id)] + encode(". " + tail)
 
 
 def vocab_size(model):
