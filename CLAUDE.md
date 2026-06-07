@@ -102,6 +102,35 @@ these primitives. New experiments should follow suit and stay thin.
   cheap. distilgpt2 has **no chat template**, so output-distribution tests pass a
   plain-text `prompt` builder.
 
+## The demo notebook
+
+`notebooks/subliminal_prompting_demo.ipynb` is the working experiment scaffolding
+and the best example of the library in use — start here for any entanglement /
+subliminal-prompting task. Its arc:
+
+1. **Basic reproduction** — `087` → ` owl`: a system prompt loving `087` raises the
+   owl probability in "My favorite bird is the ___".
+2. **Computing entangled tokens** — both methods (`output_distribution`,
+   `unembedding`), filtered to number tokens, on the ` owl` target.
+3. **Subliminal-prompting test** — does loving an entangled *number* raise a target
+   animal? A sweep over a list of animals producing base-prob + uplift tables
+   (mean / geomean / median), one per method/metric.
+4. **A larger model** — the same sweep repeated on Llama-3.1-8B for comparison.
+
+Keep cells thin: heavy logic belongs in `subliminality`, the notebook just composes
+primitives and presents results.
+
+## Scripts
+
+`scripts/perf_entanglement.py` is a performance test for the two entanglement
+methods. For `--n` random tokens (default 1000) it computes entanglements by both
+methods, then for the top-10 unembedding neighbours of each token reads the top-20
+downstream logits after `"<token>. I'd like to say:"` (result shape `(n, 10, 20)`).
+It shows tqdm bars and prints per-step timings. `output_distribution` is one
+forward pass per token, so it's chunked (`--od-batch`); bump `--od-batch`/`--b-batch`
+on large-VRAM GPUs. Run via `uv run scripts/perf_entanglement.py` (defaults to
+Llama-3.1-8B-Instruct; `--model`/`--device` override).
+
 ## Device handling (CUDA / MPS / CPU)
 
 This project must run on both **NVIDIA CUDA** machines and **Apple Silicon
