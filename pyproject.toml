@@ -5,6 +5,7 @@ description = "Research code for studying subliminal learning-like effects in co
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "accelerate>=1.13.0",
     "einops>=0.8.2",
     "hf>=1.18.0",
     "huggingface-hub>=1.18.0",
