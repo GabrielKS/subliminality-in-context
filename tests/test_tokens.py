@@ -8,8 +8,10 @@ CHAT_TEMPLATE = "{% for m in messages %}<|{{ m['role'] }}|>{{ m['content'] }}{% 
 
 
 def test_is_number():
-    assert is_number(" 087 ") and is_number("0")
+    assert is_number(" 087 ") and is_number("0")          # 87 and 0 are not blocklisted
     assert not is_number("") and not is_number(" ") and not is_number("12a")
+    assert not is_number("13") and not is_number(" 666")  # excluded by the default blocklist
+    assert is_number("13", blocklist=frozenset())          # ... unless the blocklist is empty
 
 
 def test_first_token(tokenizer):

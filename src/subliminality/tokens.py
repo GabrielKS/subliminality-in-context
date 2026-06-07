@@ -38,10 +38,19 @@ def first_token(text: str, tokenizer) -> int:
     return tokenizer.encode(text, add_special_tokens=False)[0]
 
 
-def is_number(s: str) -> bool:
-    "True if ``s`` stripped of surrounding whitespace is a non-empty run of 0-9."
+#: "Culturally loaded" numbers (ages, sports/meme/emergency codes, ...) that tend to
+#: be entangled for incidental reasons rather than the effect we study, so they are
+#: excluded from number-token analyses by default.
+NUMBER_BLOCKLIST = frozenset({
+    4, 13, 14, 18, 23, 33, 39, 42, 44, 49, 51, 54, 69, 77, 88, 99, 100, 101, 187,
+    211, 311, 322, 333, 404, 420, 444, 451, 555, 616, 666, 777, 888, 911, 999,
+})
+
+
+def is_number(s: str, blocklist: frozenset[int] = NUMBER_BLOCKLIST) -> bool:
+    "True if ``s`` stripped of whitespace is a non-empty run of 0-9 not in ``blocklist``."
     s = s.strip()
-    return s != "" and all(c in "0123456789" for c in s)
+    return s != "" and all(c in "0123456789" for c in s) and int(s) not in blocklist
 
 
 def token_mask(tokenizer, predicate: Callable[[str], bool]) -> torch.Tensor:
