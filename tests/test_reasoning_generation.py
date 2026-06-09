@@ -11,7 +11,9 @@ from subliminality import (
     answer_tokens_collide,
     batched_answer_scores,
     build_boxed_answer_instruction,
+    build_injection_prefill,
     build_reasoning_prompt,
+    default_split_sentences,
     rollout_cot,
 )
 
@@ -86,6 +88,96 @@ def test_build_boxed_answer_instruction_default_couples_with_read(tokenizer):
 def test_build_boxed_answer_instruction_rejects_mismatched_format():
     with pytest.raises(ValueError):
         build_boxed_answer_instruction("Q?", ["A", "B"], answer_format="{}")  # not a \boxed{} delimiter
+
+
+# --- build_injection_prefill --------------------------------------------------
+
+def _is_subsequence(sub, seq):
+    "True if `sub` appears in `seq` in order (not necessarily contiguous)."
+    it = iter(seq)
+    return all(x in it for x in sub)
+
+
+def _sentences(text):
+    "Split `text` at default_split_sentences boundaries, stripped & non-empty."
+    bs, out, prev = default_split_sentences(text), [], 0
+    for b in bs:
+        out.append(text[prev:b].strip())
+        prev = b
+    if prev < len(text):
+        out.append(text[prev:].strip())
+    return [s for s in out if s]
+
+
+def test_default_split_sentences_real_boundaries():
+    assert _sentences("First one. Second two! Third three?\nFourth.") == [
+        "First one.", "Second two!", "Third three?", "Fourth."]
+
+
+def test_default_split_sentences_does_not_oversplit():
+    # abbreviations, acronyms, initials, decimals, list markers, ellipsis stay intact
+    assert _sentences("Dr. Smith arrived. He was late.") == ["Dr. Smith arrived.", "He was late."]
+    assert _sentences("The U.S. is big. It grew.") == ["The U.S. is big.", "It grew."]
+    assert _sentences("Pi is 3.14 here. Done.") == ["Pi is 3.14 here.", "Done."]
+    assert _sentences("Written by J. K. Rowling. It sold.") == ["Written by J. K. Rowling.", "It sold."]
+    assert _sentences("Steps:\n1. First.\n2. Second.") == ["Steps:\n1. First.", "2. Second."]
+    assert _sentences("I wonder... maybe not. Yes.") == ["I wonder... maybe not.", "Yes."]
+    assert _sentences("Compare 34990, FL and 85345, AZ. Next.") == ["Compare 34990, FL and 85345, AZ.", "Next."]
+
+
+def test_injection_prefill_structure_and_exact_tokens(tokenizer):
+    eos = tokenizer.eos_token_id
+    content_ids = tokenizer("Alpha beta. Gamma delta. Epsilon zeta. Eta theta.",
+                            add_special_tokens=False).input_ids
+    think_ids = content_ids + [eos]                      # trailing "</think>" stand-in
+    open_ids = tokenizer(" (", add_special_tokens=False).input_ids
+    close_ids = tokenizer(") ", add_special_tokens=False).input_ids
+
+    pf = build_injection_prefill(think_ids, insert_ids=[40], cutoff_frac=1.0,
+                                 tokenizer=tokenizer, end_think_id=eos)
+    # trailing </think> stripped; no end-think token leaks into the prefill
+    assert eos not in pf.prefill_ids
+    assert pf.n_injected >= 1 and pf.cutoff_token == len(content_ids)  # frac=1 -> last boundary
+    # exact id survives verbatim, and the kept content is preserved in order
+    assert 40 in pf.prefill_ids
+    assert _is_subsequence(content_ids[: pf.cutoff_token], pf.prefill_ids)
+    # length = kept tokens + one (open + token + close) block per injection
+    assert len(pf.prefill_ids) == pf.cutoff_token + pf.n_injected * (len(open_ids) + 1 + len(close_ids))
+
+
+def test_injection_prefill_sampling_is_seeded_and_from_pool(tokenizer):
+    eos = tokenizer.eos_token_id
+    content_ids = tokenizer(" ".join(f"Sentence number {i}." for i in range(6)),
+                            add_special_tokens=False).input_ids
+    think_ids = content_ids + [eos]
+    pool = [9001, 9002, 9003]                             # ids disjoint from the short content
+    kw = dict(insert_ids=pool, cutoff_frac=1.0, tokenizer=tokenizer, end_think_id=eos)
+    a = build_injection_prefill(think_ids, seed=7, **kw)
+    b = build_injection_prefill(think_ids, seed=7, **kw)
+    assert a.prefill_ids == b.prefill_ids                 # same seed -> reproducible draws
+    injected = [t for t in a.prefill_ids if t in set(pool)]
+    assert len(injected) == a.n_injected and set(injected) <= set(pool)  # one pool token per site
+
+
+def test_injection_prefill_cutoff_monotonic(tokenizer):
+    eos = tokenizer.eos_token_id
+    content_ids = tokenizer(" ".join(f"Sentence number {i}." for i in range(8)),
+                            add_special_tokens=False).input_ids
+    think_ids = content_ids + [eos]
+    early = build_injection_prefill(think_ids, insert_ids=[7], cutoff_frac=0.2,
+                                    tokenizer=tokenizer, end_think_id=eos)
+    late = build_injection_prefill(think_ids, insert_ids=[7], cutoff_frac=0.9,
+                                   tokenizer=tokenizer, end_think_id=eos)
+    assert early.cutoff_token < late.cutoff_token        # later cutoff keeps more
+    assert early.n_injected <= late.n_injected
+
+
+def test_injection_prefill_empty_inserts_is_noop(tokenizer):
+    eos = tokenizer.eos_token_id
+    content_ids = tokenizer("Just one sentence here.", add_special_tokens=False).input_ids
+    pf = build_injection_prefill(content_ids + [eos], insert_ids=[], cutoff_frac=0.5,
+                                 tokenizer=tokenizer, end_think_id=eos)
+    assert pf.prefill_ids == content_ids and pf.n_injected == 0
 
 
 # --- rollout_cot --------------------------------------------------------------

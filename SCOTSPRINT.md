@@ -259,6 +259,8 @@ Already available (`src/subliminality/`):
   force-closed CoT → `CoTRollout`), `batched_answer_scores` (two-candidate
   logits/logprobs **+ whole-vocab top token** at a scaffold → `AnswerScores`),
   `answer_candidate_token` / `answer_tokens_collide`, `answer_scaffold_ids`,
+  `build_injection_prefill` (truncate a CoT to a sentence boundary + splice exact
+  tokens at each boundary → `InjectionPrefill`, `default_split_sentences`),
   `DEFAULT_ANSWER_SCAFFOLD` / `DEFAULT_ANSWER_FORMAT`, `DEFAULT_THINK_BUDGET`.
   `rollout_cot` and `batched_answer_scores` take `batch_size` / `progress` to chunk
   arbitrarily many prompts (bounded VRAM, per-chunk seeding).
@@ -278,11 +280,14 @@ Remaining code this sprint needs (keep reusable logic in the library, test under
   `scripts/run_qa_inference.py` rolls out a seeded `--limit` sample (or all usable
   rows) and writes one resumable Parquet of CoT (text + exact ids) and answer
   logits/logprobs/diff/winner/top-token — the corpus the injection step consumes.
-- **TODO — trace truncation to first X% + number injection** (random-position
-  splice; optional LLM-smoothed rewrite), handed back as a `rollout_cot`
-  `prefill`, then re-read.
-- **TODO — per-question driver** running entangled vs. random-number control and
-  aggregating the metrics (§4.3).
+- ~~Trace truncation to first X% + number injection~~ **done (primitive)** —
+  `build_injection_prefill` splits the CoT into sentences, cuts at `cutoff_frac`
+  (snapped to a boundary), and splices the (entangled or random-control) tokens in
+  at each boundary as exact ids → `prefill` for `build_reasoning_prompt`, then
+  `rollout_cot` regenerates. (LLM-smoothed-rewrite variant still optional/TODO.)
+- **TODO — per-question driver** running entangled vs. random-number control over
+  the cached rollouts (truncate → inject → regenerate → re-read) and aggregating the
+  metrics (§4.3), batched at `run_qa_inference` scale.
 
 Reference existing usage: `notebooks/demo_basic_qa.ipynb` (the SCoT baseline
 pipeline), `notebooks/subliminal_prompting_demo.ipynb` (entanglement methods), and
