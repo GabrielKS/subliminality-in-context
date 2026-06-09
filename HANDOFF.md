@@ -4,10 +4,21 @@ Transient working-state doc. Durable guidance lives in `CLAUDE.md`. The DeepSeek
 now **done**, so the original purpose of this file is fulfilled — it can be deleted, or its findings
 folded into a proper writeup. Kept here as the record of what the run showed.
 
-## Status: done
-`notebooks/subliminal_prompting_demo.ipynb` is **fully executed end-to-end** (committed in
-"Update notebook with new results!"). All four DeepSeek tables — ratio/unembedding discovery ×
-empty-think/generated-think measurement — have outputs. `uv run pytest` → 26 passing.
+## Status: done, then refined
+`notebooks/subliminal_prompting_demo.ipynb` is **fully executed end-to-end** (the four DeepSeek
+tables — ratio/unembedding discovery × empty-think/generated-think measurement — all have outputs;
+`uv run pytest` → 26 passing).
+
+**Since the "Update notebook with new results!" commit, the generated-think path was refined**
+(uncommitted working-tree edits to `measure_ds_gen` + the two gen-think cells):
+- **Budget 512 → 1024.** At 512 *most* gen-think traces never emitted `</think>` (R1-Distill
+  overthinks the trivial favorite-animal prompt). 1024 is the affordable ceiling.
+- **Force-close + logging.** Any trace still open at the budget gets `</think>` appended so its
+  answer is read in a closed block; the force-close **rate** is logged per-animal (real-time) and
+  as an end-of-run % per table. The durable mechanics now live in CLAUDE.md ("Budget the think
+  block, then force-close").
+- **Effect got stronger.** With proper closing (1024 + force-close) the subliminal uplift is
+  **larger** than the open-block numbers in the table below — so that table is now **stale**.
 
 ## The batching paid off (the point of this work)
 Per-animal batching (1 `generate` + 1 read per animal, batch = 21 instructions × 3 samples = 63
@@ -27,6 +38,9 @@ Headline metric: **geomean uplift (top-k)** = outlier-robust "typical" uplift of
 probability when the model is told to love its top-k entangled numbers, normalized by the
 unconditioned base prob. `top-k vs bottom-k` tells whether *entanglement ranking* matters (vs.
 loving any number at all).
+
+> ⚠️ **Pre-force-close numbers (512-tok budget, open-block reads).** Superseded by the 1024 +
+> force-close rerun, where the gen-think effect is stronger — refresh these from the latest run.
 
 | discovery × condition | geomean uplift top-k | bottom-k |
 |---|---|---|

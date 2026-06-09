@@ -157,6 +157,25 @@ different handling from the Instruct models:
   empty* think block (`<think>\n\n</think>`) so the answer position is read directly, no
   generation. The other condition *generates* a real think block (sampled), stops at `</think>`,
   then teacher-forces the answer prefix and reads `P(target)`.
+- **Budget the think block, then force-close (generated-think).** R1-Distill *overthinks* even
+  trivial prompts ("what's your favorite animal?"), so most traces blow past a short
+  `max_new_tokens` budget without ever emitting `</think>` — and reading the answer after an
+  **open** think block is malformed. Two practices, learned the hard way:
+  1. **Don't trust a round-number budget.** `512` is far too short (the majority of traces never
+     close); `1024` is the affordable floor we use, but the budget is an *empirical axis*, not a
+     "sufficient" constant (R1's own design ceiling is 32k). Always **log the unclosed rate** and
+     pick the budget by a stated tolerance — and report results as "think for up to N tokens",
+     since at a tight budget you are measuring *truncated* reasoning, not free generation.
+  2. **Force-close.** Append `</think>` to any trace that hit the budget,
+     so every measured trace is read in a closed block — naturally or artificially (a natural close
+     ends on exactly that token, so the forced one mirrors it). Keep the force-close **rate**
+     visible (real-time + an end-of-run %). This both fixes the malformed read and, empirically,
+     **strengthened** the measured subliminal effect vs. the old open-block reads.
+  3. **Never shorten via prompt text** ("be brief", "answer in one sentence"): it's unreliable
+     *and* it contaminates the very prompt you're probing. Budget/force-close are decode-time only.
+  Note the generation prompt carries **no target token** and is seeded per batch, so the think
+  blocks are identical across targets within a run (only the final `P(target)` read differs) —
+  hence the force-close rate is the same for every target.
 - **Temperature is irrelevant to the logit probes** (they read the raw distribution). DeepSeek's
   temp 0.6 / top_p 0.95 recommendation is for *generation* — used only in the gen-think
   condition, seeded via `seed_everything`.
