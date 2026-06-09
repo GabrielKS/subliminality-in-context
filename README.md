@@ -38,3 +38,12 @@ To work in notebooks, you can launch Jupyter through uv so it uses the project v
 ```bash
 uv run jupyter lab
 ```
+
+## SCoT Sprint
+To reproduce:
+```bash
+uv run scripts/build_scot_dataset.py
+uv run scripts/build_answer_entangled_tokens.py
+uv run scripts/run_qa_inference.py --limit 96 --batch-size 48 --out data/qa_inference_small.parquet
+uv run scripts/run_qa_inference.py --limit 1000 --batch-size 48 --out data/qa_inference_medium.parquet
+```

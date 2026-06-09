@@ -34,6 +34,9 @@ them commit.
 - `scripts/` — runnable scripts; invoke via `uv run scripts/<name>.py`.
 - `notebooks/` — Jupyter notebooks.
 - `tests/` — pytest tests, discovered under `tests/`.
+- `data/` — generated data artifacts (Parquet); **gitignored**, regenerate via the
+  `scripts/build_*` scripts. Source data is the `chainscope` repo, cloned alongside
+  the repo (see README and `SCOTSPRINT.md` §5).
 
 ## Conventions
 
@@ -80,6 +83,16 @@ vocabulary (a trailing `[..., vocab]` dim). `method` is required:
 
 Supporting primitives in `subliminality.tokens`: `build_input_ids` (exact-token
 splice), `first_token`, `token_mask` + `is_number`, `top_bottom`.
+
+Generation/reading primitives: `subliminality.generation`
+(`batched_answer_probs`, `batched_generate_truncated`) and — for reasoning models
+— `subliminality.reasoning_generation` (`build_reasoning_prompt`,
+`build_boxed_answer_instruction`, `rollout_cot`, `batched_answer_scores`,
+`answer_candidate_token`, `answer_tokens_collide`, `DEFAULT_ANSWER_SCAFFOLD`; see
+`SCOTSPRINT.md`). `rollout_cot` / `batched_answer_scores` take `batch_size` /
+`progress` to chunk arbitrarily many prompts (bounded VRAM, per-chunk seeding);
+`AnswerScores` carries both candidates' logits/logprobs **and** the whole-vocab top
+token (`top_token_id`/`top_logprob`, for free-choice accuracy).
 
 The library is **domain-agnostic** — no animals/birds. Experiment scaffolding
 (animal/bird preference sweeps, pandas tables) lives in the notebook, built on
@@ -141,6 +154,11 @@ subliminal-prompting task. Its arc:
 Keep cells thin: heavy logic belongs in `subliminality`, the notebook just composes
 primitives and presents results.
 
+For the **SCoT (subliminal chain-of-thought) sprint**, see `SCOTSPRINT.md` (plan +
+current status) and `notebooks/demo_basic_qa.ipynb` — the baseline reasoning-QA
+pipeline (`build_reasoning_prompt` → `rollout_cot` → `batched_answer_scores` at a
+`\boxed{` scaffold) on the chainscope comparison questions.
+
 ## Reasoning models (DeepSeek R1-Distill)
 
 `deepseek-ai/DeepSeek-R1-Distill-Llama-8B` (Llama-3.1-8B distilled on R1 traces) needs
@@ -181,6 +199,34 @@ different handling from the Instruct models:
   condition, seeded via `seed_everything`.
 - **Tokenizer:** load via `PreTrainedTokenizerFast` (see the #45488 gotcha above).
 
+## Reading a constrained answer (the `\boxed{` convention)
+
+For comparison QA (the SCoT sprint) the answer is read at a teacher-forced
+`\boxed{` scaffold after the closed `</think>`. Learned the hard way:
+
+- **Scaffold = `DEFAULT_ANSWER_SCAFFOLD` (`"\n\n\\boxed{"`).** The trailing `{`
+  tokenizes as its own token → a hard *no-space* boundary, so the next token is the
+  entity's first token with no leading space and natural casing. Empirically
+  R1-Distill puts ~0.999 of its mass on that single token there (the competing entity
+  ~8 logits below — the signal we read).
+- **Derive the candidate token *in context*** with `answer_candidate_token` (tokenize
+  `scaffold + name`, take the first token past the scaffold) — never
+  `first_token(" " + name)`, which guesses the space/casing wrong. It returns `None`
+  on a cross-boundary BPE merge (e.g. `{i` for "iPhone"); `answer_tokens_collide`
+  treats `None`-or-equal pairs as degenerate and drops them. `DEFAULT_ANSWER_FORMAT`
+  (`"\\boxed{{{}}}"`) stays coupled to the scaffold.
+- **Constrain the output** with `build_boxed_answer_instruction(question, [x, y])`
+  (Arcuschin et al.'s "give a YES / NO answer" analogue, options in **question
+  order**). It makes the model box one of the two names *verbatim*, so the first-token
+  read is faithful even for long author-prefixed names (which the model would
+  otherwise box as a short surface form, e.g. "Charles Band's Hideous!" → `Hideous!`).
+  Only the final token is constrained; the chain of thought stays free.
+- **Diff sign:** order candidates **(correct, incorrect)** so `AnswerScores.logit_diff`
+  / `.logprob_diff` = correct − incorrect — **positive ⇒ favors the correct entity**.
+- **Free-choice accuracy:** `AnswerScores.top_token_id` is the whole-vocab argmax at
+  the read point (regardless of the two candidates) — use it to ask whether the
+  model's actual pick is the correct answer / either candidate.
+
 ## Scripts
 
 `scripts/perf_entanglement.py` is a performance test for the two entanglement
@@ -191,6 +237,32 @@ It shows tqdm bars and prints per-step timings. `output_distribution` is one
 forward pass per token, so it's chunked (`--od-batch`); bump `--od-batch`/`--b-batch`
 on large-VRAM GPUs. Run via `uv run scripts/perf_entanglement.py` (defaults to
 Llama-3.1-8B-Instruct; `--model`/`--device` override).
+
+`scripts/build_scot_dataset.py` builds the SCoT question table
+`data/wm-non-ambiguous-hard-2.parquet` from the chainscope question YAMLs (the
+`non-ambiguous-hard-2` subset: 9,668 questions carrying the `q_str_open_ended`
+entity-answer field plus a derived `correct_name`/`incorrect_name`, with polarity
+cross-checked against the aggregated pickle).
+
+`scripts/build_answer_entangled_tokens.py` builds
+`data/answer-entangled-tokens.parquet` (keyed by `qid`): per question, the top-10
+/ bottom-10 number tokens entangled (unembedding cosine) with each entity's
+`\boxed{` answer-candidate token, plus the `answer_tokens_collide` flag. Loads
+DeepSeek-R1-Distill-Llama-8B for its unembedding matrix only (no generation).
+
+`scripts/run_qa_inference.py` runs the reasoning-QA pipeline over the dataset:
+collision-filter → seeded `--limit` sample (or all usable rows) → batched
+`rollout_cot` → `batched_answer_scores` at the `\boxed{` scaffold. Writes a **single
+resumable Parquet** (`--out`, rewritten each batch; resume skips rows already present
+by `qid` — not sharded), caching per question the CoT (`think_text` + exact
+`think_token_ids`), both candidates' logits/logprobs, `logprob_diff` (correct −
+incorrect), the free-choice top token, and accuracy/force-close flags. ~0.7 rows/s at
+`--batch-size 48` (KV-cache-bound; B≈48 peaks ~37 GB, B=96 OOMs);
+`PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` recommended. This is the baseline
+corpus the injection step later corrupts.
+
+All three write under `data/` (gitignored) and run from the repo root; see
+`SCOTSPRINT.md` for how the tables feed the experiment.
 
 ## Device handling (CUDA / MPS / CPU)
 
