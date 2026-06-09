@@ -141,20 +141,20 @@ def main() -> None:
 
     df = pd.read_parquet(args.data)
     rows = select_rows(df, tokenizer, args.limit, args.seed)
+
+    # Resume: load prior output and drop already-done rows *before* batching, so a
+    # partially-overlapping batch can't re-process (and duplicate) a done qid.
+    done = pd.read_parquet(out) if out.exists() else pd.DataFrame()
+    done_qids = set(done.qid) if len(done) else set()
+    if done_qids:
+        rows = rows[~rows.qid.isin(done_qids)].reset_index(drop=True)
+        print(f"resuming: {len(done_qids)} rows already in {out}; {len(rows)} left to do")
     chunks = [rows.iloc[i:i + args.batch_size] for i in range(0, len(rows), args.batch_size)]
     print(f"{len(rows)} rows -> {len(chunks)} batches of up to {args.batch_size}")
 
-    # Resume: load any prior output and skip batches whose rows are all already done.
-    done = pd.read_parquet(out) if out.exists() else pd.DataFrame()
-    done_qids = set(done.qid) if len(done) else set()
     collected = [done] if len(done) else []
-    if done_qids:
-        print(f"resuming: {len(done_qids)} rows already in {out}")
-
     bar = tqdm(list(enumerate(chunks)), desc="batches")
     for i, chunk in bar:
-        if set(chunk.qid) <= done_qids:
-            continue  # whole batch already done
         recs = process_batch(chunk, i, model=model, tokenizer=tokenizer, end_think_id=end_think_id,
                               answer_ids=answer_ids, max_new_tokens=args.max_new_tokens, seed=args.seed)
         collected.append(recs)

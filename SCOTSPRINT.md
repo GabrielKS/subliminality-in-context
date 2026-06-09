@@ -7,13 +7,16 @@
 - ✅ **Question table** — `data/wm-non-ambiguous-hard-2.parquet` (9,668 questions)
   via `scripts/build_scot_dataset.py` (§5).
 - ✅ **Per-answer entangled numbers** — `data/answer-entangled-tokens.parquet`
-  (keyed by `qid`; top/bottom-10 cosine-entangled number tokens for each entity's
-  answer-candidate token) via `scripts/build_answer_entangled_tokens.py` (§5.1).
-- ✅ **Reasoning primitives** — `src/subliminality/reasoning_generation.py` +
-  baseline `notebooks/demo_basic_qa.ipynb` (roll out a CoT, read the two-answer
-  logits at the `\boxed{` scaffold).
-- ⏳ **Next** — truncate a baseline trace → splice entangled numbers in as a
-  `prefill` → regenerate → compare `logprob_diff` vs. a random-number control (§7).
+  via `scripts/build_answer_entangled_tokens.py` (§5.1).
+- ✅ **Reasoning primitives** — `src/subliminality/reasoning_generation.py`
+  (build prompt → roll out CoT → read two-answer logits at the `\boxed{` scaffold).
+- ✅ **End-to-end pipeline** — `run_qa_inference.py` (baseline CoTs + answer
+  logprobs) → `run_cot_corruption.py` (truncate, inject numbers, regenerate;
+  entangled + `random_numerical` control runs in `data/corrupted/`) →
+  `plot_corruption_comparison.py` (base vs. random vs. entangled, paired by `qid`).
+  Notebooks: `demo_basic_qa`, `demo_cot_injection`, `visualize_qa_inference`.
+- ⏳ **Next** — scale n / sweep cutoff fractions and interpret (small pilot runs so
+  far show no significant entangled-vs-random difference; §4, §7).
 
 ---
 
@@ -108,6 +111,15 @@ numbers do?
 6. **Verdict.** Entangled injection shifting the answer toward the non-chosen
    entity significantly more than the random control ⇒ subliminal CoT elicited.
 
+**Note — injection propagates.** The regenerated half *imitates* the injected `(N)`
+pattern: the model keeps emitting parenthesized pool numbers at its own sentence
+boundaries **past** the cutoff (in-context induction; see
+`notebooks/demo_cot_injection.ipynb`). So step 3's first-X% splice effectively corrupts
+the whole trace, with injected numbers recurring up to the answer. The random control
+(step 5) propagates the same way, so the paired test stays valid — but the intervention
+is stronger than "first-X%-only", and a clean *distance-decay* read (§4.5) requires
+suppressing it (logit-ban the pool ids during regeneration, or a paren-free format).
+
 ### 4.3 Metrics
 - **Primary:** the signed first-token gap at the `\boxed{` read point —
   `logit(correct) − logit(incorrect)` (or the log-prob version), a continuous
@@ -145,6 +157,10 @@ Use the prototyped reasoning primitives — baseline pipeline in
 Inject into a *small* early window (e.g. X=10%) at varying distances from the
 answer and check whether the effect shrinks with distance (the writing sample's
 hypothesis). Thought-anchors-style sentence attribution could deepen this later.
+**Prerequisite:** suppress injection **propagation** (§4.2 note) first — otherwise the
+model re-emits pool numbers at every later sentence boundary, so "distance" is
+meaningless. Logit-ban the pool ids during regeneration (a `bad_words_ids`/logit
+processor in `rollout_cot` gen_kwargs) before running the decay sweep.
 
 ---
 
@@ -285,13 +301,22 @@ Remaining code this sprint needs (keep reusable logic in the library, test under
   (snapped to a boundary), and splices the (entangled or random-control) tokens in
   at each boundary as exact ids → `prefill` for `build_reasoning_prompt`, then
   `rollout_cot` regenerates. (LLM-smoothed-rewrite variant still optional/TODO.)
-- **TODO — per-question driver** running entangled vs. random-number control over
-  the cached rollouts (truncate → inject → regenerate → re-read) and aggregating the
-  metrics (§4.3), batched at `run_qa_inference` scale.
+- ~~Corruption driver (truncate → inject → regenerate → re-read)~~ **done** —
+  `scripts/run_cot_corruption.py`, batched at `run_qa_inference` scale, one
+  `--tokens-source` per run (`{correct,incorrect}_{top10,bottom10}` or
+  `random_numerical`). Each run writes a corrupted Parquet paired to its control by
+  `qid` (same positions). Visualized in `notebooks/demo_cot_injection.ipynb`.
+- ~~Cross-condition aggregation~~ **done** — `scripts/plot_corruption_comparison.py`
+  joins base + `random_numerical` + entangled corrupted Parquets (paired by `qid`)
+  into a 3-panel PNG (fraction correct, change in fraction correct, correct−incorrect
+  logit difference) with 95% CIs and a paired t-test vs. random (`*` = p<0.05).
+  Single-run views: `notebooks/visualize_qa_inference.ipynb`.
 
-Reference existing usage: `notebooks/demo_basic_qa.ipynb` (the SCoT baseline
-pipeline), `notebooks/subliminal_prompting_demo.ipynb` (entanglement methods), and
-`scripts/perf_entanglement.py`.
+Reference existing usage: the pipeline scripts `run_qa_inference.py` →
+`run_cot_corruption.py` → `plot_corruption_comparison.py`; notebooks
+`demo_basic_qa.ipynb` (baseline), `demo_cot_injection.ipynb` (injection),
+`visualize_qa_inference.ipynb` (single-run plots), and
+`subliminal_prompting_demo.ipynb` (entanglement methods).
 
 ---
 

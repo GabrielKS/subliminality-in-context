@@ -35,8 +35,9 @@ them commit.
 - `notebooks/` — Jupyter notebooks.
 - `tests/` — pytest tests, discovered under `tests/`.
 - `data/` — generated data artifacts (Parquet); **gitignored**, regenerate via the
-  `scripts/build_*` scripts. Source data is the `chainscope` repo, cloned alongside
-  the repo (see README and `SCOTSPRINT.md` §5).
+  `scripts/` build/run scripts. Source data is the `chainscope` repo, cloned
+  alongside the repo (see README and `SCOTSPRINT.md` §5).
+- `plots/` — generated figures (PNG), e.g. from `scripts/plot_corruption_comparison.py`.
 
 ## Conventions
 
@@ -158,6 +159,8 @@ For the **SCoT (subliminal chain-of-thought) sprint**, see `SCOTSPRINT.md` (plan
 current status) and `notebooks/demo_basic_qa.ipynb` — the baseline reasoning-QA
 pipeline (`build_reasoning_prompt` → `rollout_cot` → `batched_answer_scores` at a
 `\boxed{` scaffold) on the chainscope comparison questions.
+`notebooks/demo_cot_injection.ipynb` shows the injection step, and
+`notebooks/visualize_qa_inference.ipynb` plots a single QA-inference run.
 
 ## Reasoning models (DeepSeek R1-Distill)
 
@@ -261,8 +264,28 @@ incorrect), the free-choice top token, and accuracy/force-close flags. ~0.7 rows
 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` recommended. This is the baseline
 corpus the injection step later corrupts.
 
-All three write under `data/` (gitignored) and run from the repo root; see
-`SCOTSPRINT.md` for how the tables feed the experiment.
+`scripts/run_cot_corruption.py` is the **injection step**: it joins the cached CoTs
+(`--cots`, a `run_qa_inference` output) with the source questions (`--source`) and the
+entangled-number table (`--entangled`), then per row injects number tokens into the CoT
+and regenerates. `--tokens-source` (required) picks the pool —
+`correct_top10`/`incorrect_top10`/`…_bottom10` (mapped to the `x`/`y` entangled column
+by ground truth) or `random_numerical` (the control); `--cutoff-frac` (required) sets
+the truncation. Output mirrors the `--cots` schema (recomputed for the regenerated
+trace) plus corruption columns (`cutoff_frac`, `tokens_source`, `n_injected`,
+`pool_token_ids`, `baseline_logprob_diff`, …); default
+`data/corrupted/corrupted_{cutoff}_{tokens_source}.parquet`, single resumable Parquet.
+The same seed + cutoff makes an entangled and a `random_numerical` run inject at the
+**same positions** on the **same qids**, so the two outputs are paired by `qid`.
+
+`scripts/plot_corruption_comparison.py` is the **analysis step**: given a base
+`run_qa_inference` Parquet, the `random_numerical` corruption run, and any number of
+entangled corruption runs (all paired by `qid`), it writes a 3-panel PNG — fraction
+correct, change in fraction correct, and the correct−incorrect logit difference —
+each with 95% CIs and a `*` on entangled bars that differ from the random control
+(paired t-test). Writes to `--out` (default under `plots/`).
+
+These run from the repo root and write under `data/` (gitignored) or `plots/`; see
+`SCOTSPRINT.md` for how the tables and plots feed the experiment.
 
 ## Device handling (CUDA / MPS / CPU)
 
