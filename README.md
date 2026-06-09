@@ -18,6 +18,12 @@ environment (installs the library in editable mode plus dev tooling):
 uv sync
 ```
 
+Also clone another project from which we reuse data:
+
+```bash
+git clone git@github.com:jettjaniak/chainscope.git
+```
+
 ## Common tasks
 
 ```bash
