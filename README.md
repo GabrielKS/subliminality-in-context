@@ -79,4 +79,8 @@ uv run scripts/plot_corruption_comparison.py --base data/qa_inference_small.parq
 
 uv run scripts/plot_corruption_comparison.py --base data/qa_inference_small.parquet --random data/corrupted/corrupted_0.75_random_numerical.parquet --out plots/small_0.75.png\
   --entangled data/corrupted/corrupted_0.75_correct_top10.parquet data/corrupted/corrupted_0.75_incorrect_top10.parquet data/corrupted/corrupted_0.75_correct_bottom10.parquet data/corrupted/corrupted_0.75_incorrect_bottom10.parquet
+
+# Follow-up analysis for version two:
+uv run scripts/force_end_fraction.py --cutoff 0.5 --condition base
+# run notebooks/visualize_corruption_insertions.ipynb
 ```
